@@ -219,7 +219,7 @@ impl<E: Env> NetNs<E> {
     ///
     /// Requires elevated privileges.
     pub fn enter(&self) -> Result<()> {
-        setns(self.file.as_raw_fd(), CloneFlags::CLONE_NEWNET).map_err(Error::SetnsError)
+        setns(&self.file, CloneFlags::CLONE_NEWNET).map_err(Error::SetnsError)
     }
 
     /// Returns the NetNs with the specified name and Env.
