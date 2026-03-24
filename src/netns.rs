@@ -5,7 +5,7 @@
 
 use std::fs::File;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::io::{AsRawFd, IntoRawFd};
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
 
@@ -152,11 +152,10 @@ impl<E: Env> NetNs<E> {
         // create an empty file at the mount point
         let ns_path = env.persist_dir().join(ns_name.as_ref());
         let _ = File::create(&ns_path).map_err(Error::CreateNsError)?;
-        Self::persistent(&ns_path, true).map_err(|e| {
+        Self::persistent(&ns_path, true).inspect_err(|_e| {
             // Ensure the mount point is cleaned up on errors; if the namespace was successfully
             // mounted this will have no effect because the file is in-use
             std::fs::remove_file(&ns_path).ok();
-            e
         })?;
         Self::get_from_env(ns_name, env)
     }
@@ -167,11 +166,7 @@ impl<E: Env> NetNs<E> {
             let new_thread: JoinHandle<Result<()>> =
                 thread::spawn(move || Self::persistent(&ns_path_clone, false));
             match new_thread.join() {
-                Ok(t) => {
-                    if let Err(e) = t {
-                        return Err(e);
-                    }
-                }
+                Ok(t) => t?,
                 Err(e) => {
                     return Err(Error::JoinThreadError(format!("{:?}", e)));
                 }
@@ -238,8 +233,8 @@ impl<E: Env> NetNs<E> {
     ///
     /// Once called, this instance will not be available.
     pub fn remove(self) -> Result<()> {
-        // need close first
-        nix::unistd::close(self.file.into_raw_fd()).map_err(Error::CloseNsError)?;
+        // Close the file descriptor by dropping it.
+        drop(self.file);
         // Only unmount if it's been bind-mounted (don't touch namespaces in /proc...)
         if let Some(env) = &self.env {
             if env.contains(&self.path) {
@@ -348,7 +343,16 @@ fn get_current_thread_netns_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::ManuallyDrop;
     use std::os::unix::io::FromRawFd;
+
+    fn make_dummy_netns(fd: i32, path: &str) -> ManuallyDrop<NetNs<DefaultEnv>> {
+        ManuallyDrop::new(NetNs {
+            file: unsafe { File::from_raw_fd(fd) },
+            path: PathBuf::from(path),
+            env: None,
+        })
+    }
 
     #[test]
     fn test_netns_display() {
@@ -357,12 +361,8 @@ mod tests {
         assert!(print.contains("dev"));
         assert!(print.contains("ino"));
 
-        let ns: NetNs<DefaultEnv> = NetNs {
-            file: unsafe { File::from_raw_fd(i32::MAX) },
-            path: PathBuf::from(""),
-            env: None,
-        };
-        let print = format!("{}", ns);
+        let ns = make_dummy_netns(i32::MAX, "");
+        let print = format!("{}", *ns);
         assert!(!print.contains("dev"));
         assert!(!print.contains("ino"));
     }
@@ -373,24 +373,12 @@ mod tests {
         let ns2 = get_from_path("/proc/self/ns/net").unwrap();
         assert_eq!(ns1, ns2);
 
-        let ns1: NetNs<DefaultEnv> = NetNs {
-            file: unsafe { File::from_raw_fd(i32::MAX) },
-            path: PathBuf::from("aaaaaa"),
-            env: None,
-        };
-        let ns2: NetNs<DefaultEnv> = NetNs {
-            file: unsafe { File::from_raw_fd(i32::MAX) },
-            path: PathBuf::from("bbbbbb"),
-            env: None,
-        };
-        assert_eq!(ns1, ns2);
+        let ns1 = make_dummy_netns(i32::MAX, "aaaaaa");
+        let ns2 = make_dummy_netns(i32::MAX, "bbbbbb");
+        assert_eq!(*ns1, *ns2);
 
-        let ns2: NetNs<DefaultEnv> = NetNs {
-            file: unsafe { File::from_raw_fd(i32::MAX - 1) },
-            path: PathBuf::from("aaaaaa"),
-            env: None,
-        };
-        assert_eq!(ns1, ns2);
+        let ns2 = make_dummy_netns(i32::MAX - 1, "aaaaaa");
+        assert_eq!(*ns1, *ns2);
     }
 
     #[test]
@@ -486,6 +474,6 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert!(matches!(ret, Ok(_)));
+        assert!(ret.is_ok());
     }
 }
