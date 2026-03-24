@@ -9,47 +9,33 @@ on:
 jobs:
   test:
     name: Test
-    env:
-      CARGO_INCREMENTAL: 0
-      RUSTFLAGS: -Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort
-      RUSTDOCFLAGS: -Cpanic=abort
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+      - uses: actions/checkout@v5
 
-      - name: Cache dependencies
-        uses: actions/cache@v2
-        env:
-          cache-name: cache-cargo-dependencies
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cargo/bin
-          key: ${{ runner.os }}-build-${{ env.cache-name }}
+          components: llvm-tools-preview
 
-      - name: Run test
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage report
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: "sudo -E"
         run: |
           cargo clean;
-          cargo test $CARGO_OPTIONS -- -Z unstable-options;
-
-      - name: Coverage
-        uses: actions-rs/grcov@v0.1
-        with:
-          config: .github/grcov.yml
+          cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload to CodeCov
-        uses: codecov/codecov-action@v2
+        uses: codecov/codecov-action@v4
         with:
           # required for private repositories:
-          # token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
           fail_ci_if_error: true
