@@ -152,11 +152,10 @@ impl<E: Env> NetNs<E> {
         // create an empty file at the mount point
         let ns_path = env.persist_dir().join(ns_name.as_ref());
         let _ = File::create(&ns_path).map_err(Error::CreateNsError)?;
-        Self::persistent(&ns_path, true).map_err(|e| {
+        Self::persistent(&ns_path, true).inspect_err(|_e| {
             // Ensure the mount point is cleaned up on errors; if the namespace was successfully
             // mounted this will have no effect because the file is in-use
             std::fs::remove_file(&ns_path).ok();
-            e
         })?;
         Self::get_from_env(ns_name, env)
     }
@@ -167,11 +166,7 @@ impl<E: Env> NetNs<E> {
             let new_thread: JoinHandle<Result<()>> =
                 thread::spawn(move || Self::persistent(&ns_path_clone, false));
             match new_thread.join() {
-                Ok(t) => {
-                    if let Err(e) = t {
-                        return Err(e);
-                    }
-                }
+                Ok(t) => t?,
                 Err(e) => {
                     return Err(Error::JoinThreadError(format!("{:?}", e)));
                 }
@@ -479,6 +474,6 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert!(matches!(ret, Ok(_)));
+        assert!(ret.is_ok());
     }
 }
